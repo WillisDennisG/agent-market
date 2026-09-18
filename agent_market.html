@@ -1,0 +1,987 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AgentMarket — traders + predictive math</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:#070a10;color:#e6edf3;
+font:12px/1.4 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+canvas{display:block}
+#c3d{position:fixed;inset:0;z-index:0}
+
+.panel{position:fixed;z-index:10;background:rgba(15,20,28,.9);
+border:1px solid #1f2836;border-radius:11px;backdrop-filter:blur(9px);padding:10px 12px}
+
+#topbar{top:10px;left:50%;transform:translateX(-50%);display:flex;gap:16px;
+align-items:center;padding:7px 16px}
+#topbar .brand{font-weight:800;font-size:14px}
+#topbar .brand span{color:#f0b90b}
+#topbar .stat{font-size:11px;color:#8b98a9}
+#topbar .stat b{color:#e6edf3;font-weight:600}
+
+#left{top:66px;left:12px;width:300px;max-height:calc(100vh - 300px);overflow-y:auto}
+#right{top:66px;right:12px;width:290px;max-height:calc(100vh - 300px);overflow-y:auto}
+#left::-webkit-scrollbar,#right::-webkit-scrollbar{width:5px}
+#left::-webkit-scrollbar-thumb,#right::-webkit-scrollbar-thumb{background:#2a3342;border-radius:3px}
+
+h3{margin:0 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.1em;
+color:#8b98a9;display:flex;justify-content:space-between;align-items:center}
+h3 .tag{background:#1b2431;border-radius:5px;padding:1px 6px;font-size:9px;color:#8b98a9}
+
+.strat-row{display:flex;align-items:center;gap:8px;padding:5px 7px;
+border-radius:6px;margin-bottom:3px;border:1px solid transparent;cursor:pointer}
+.strat-row:hover{background:rgba(88,166,255,.08)}
+.strat-row.sel{border-color:#f0b90b;background:rgba(240,185,11,.1)}
+.strat-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.strat-name{font-weight:700;font-size:11px}
+.strat-sub{font-size:9px;color:#8b98a9}
+.strat-val{margin-left:auto;text-align:right;font-family:ui-monospace,monospace;font-size:11px}
+
+.agentrow{display:grid;grid-template-columns:22px 1fr 62px 68px;gap:6px;
+padding:4px 6px;font-size:10px;border-bottom:1px dashed #1a2231;
+font-family:ui-monospace,monospace;align-items:center}
+.agentrow:hover{background:rgba(88,166,255,.06)}
+.adot{width:8px;height:8px;border-radius:50%;margin:auto}
+.aname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.apos{text-align:right}
+.apnl{text-align:right;font-weight:600}
+
+.metric{display:flex;justify-content:space-between;padding:3px 0;font-size:11px}
+.metric span:first-child{color:#8b98a9}
+.metric span:last-child{font-family:ui-monospace,monospace;font-weight:600}
+
+#bottom{position:fixed;bottom:10px;left:12px;right:12px;height:250px;
+background:rgba(15,20,28,.94);border:1px solid #1f2836;border-radius:11px;
+padding:9px 12px;z-index:10;backdrop-filter:blur(9px)}
+#tabs{display:flex;gap:6px;margin-bottom:6px;align-items:center}
+.tab{background:transparent;border:1px solid #2a3342;color:#8b98a9;
+border-radius:6px;padding:3px 10px;cursor:pointer;font-size:10px;font-weight:600}
+.tab.active{background:#1b2431;color:#e6edf3;border-color:#3a4658}
+#chartTitle{margin-left:auto;font-size:10px;color:#8b98a9}
+#mainchart{width:100%;height:calc(100% - 30px);display:block}
+
+.hint{color:#8b98a9;font-size:10px}
+.pos{color:#3fb950} .neg{color:#f85149}
+button.ctrl{background:#1b2431;border:1px solid #2a3342;color:#e6edf3;
+border-radius:6px;padding:4px 10px;cursor:pointer;font-size:10px;font-weight:600;margin-right:4px}
+button.ctrl:hover{background:#243040}
+</style>
+</head>
+<body>
+<canvas id="c3d"></canvas>
+
+<div id="topbar" class="panel">
+  <span class="brand">AgentMarket <span>•</span> PRED</span>
+  <span class="stat">Price <b id="s-price">--</b></span>
+  <span class="stat">σ <b id="s-vol">--</b></span>
+  <span class="stat">Flow <b id="s-flow">--</b></span>
+  <span class="stat">Prediction <b id="s-pred">--</b></span>
+  <span class="stat">Tick <b id="s-tick">0</b></span>
+</div>
+
+<div id="left" class="panel">
+  <h3>Trader Strategies <span class="tag" id="activeTag">-- active</span></h3>
+  <div id="stratlist"></div>
+  <h3 style="margin-top:12px">Individual Traders</h3>
+  <div class="agentrow" style="color:#8b98a9;border-bottom:1px solid #2a3342">
+    <div></div><div>Agent</div><div class="apos">Pos</div><div class="apnl">P&L</div>
+  </div>
+  <div id="agentlist" style="max-height:280px;overflow-y:auto"></div>
+</div>
+
+<div id="right" class="panel">
+  <h3 id="dt">Market State</h3>
+  <div id="detail"></div>
+  <h3 style="margin-top:12px">Prediction Models</h3>
+  <div id="predpanel"></div>
+  <h3 style="margin-top:12px">Controls</h3>
+  <button class="ctrl" onclick="shock(+0.05)">↑ Shock</button>
+  <button class="ctrl" onclick="shock(-0.05)">↓ Shock</button>
+  <button class="ctrl" onclick="pauseToggle()" id="pauseBtn">Pause</button>
+  <button class="ctrl" onclick="resetAll()">Reset</button>
+</div>
+
+<div id="bottom">
+  <div id="tabs">
+    <button class="tab active" data-tab="price" onclick="setTab('price')">Price + Prediction</button>
+    <button class="tab" data-tab="pnl" onclick="setTab('pnl')">Strategy P&L</button>
+    <button class="tab" data-tab="position" onclick="setTab('position')">Net Position</button>
+    <span id="chartTitle"></span>
+  </div>
+  <canvas id="mainchart"></canvas>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+// =====================================================================
+// MATH
+// =====================================================================
+function gauss(){let u=0,v=0;while(u===0)u=Math.random();while(v===0)v=Math.random();
+return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+const mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0;
+const std=a=>{if(a.length<2)return 0;const m=mean(a);
+return Math.sqrt(a.reduce((s,x)=>s+(x-m)**2,0)/(a.length-1));};
+function ema(data,period){const k=2/(period+1);let prev=null;const out=[];
+for(const v of data){if(v==null){out.push(null);continue;}
+if(prev==null){prev=v;out.push(v);}else{prev=v*k+prev*(1-k);out.push(prev);}}return out;}
+function sma(data,period){const out=[];
+for(let i=0;i<data.length;i++){
+if(i<period-1){out.push(null);continue;}
+let s=0;for(let j=i-period+1;j<=i;j++)s+=data[j];out.push(s/period);}return out;}
+
+// AR(1) on returns: r_t = c + φ·r_{t-1} + ε
+function fitAR1(returns){
+  if(returns.length<10) return {c:0,phi:0,sigma:0};
+  const r1=returns.slice(0,-1), r2=returns.slice(1);
+  const m1=mean(r1), m2=mean(r2);
+  let num=0,den=0;
+  for(let i=0;i<r1.length;i++){num+=(r1[i]-m1)*(r2[i]-m2);den+=(r1[i]-m1)**2;}
+  const phi=den===0?0:num/den;
+  const c=m2-phi*m1;
+  const resid=r2.map((y,i)=>y-(c+phi*r1[i]));
+  return {c,phi,sigma:std(resid)};
+}
+
+// 1D Kalman filter for price level with random-walk state
+function kalmanUpdate(state,measurement){
+  // state: {x, P, Q, R}
+  const Ppred = state.P + state.Q;
+  const K = Ppred / (Ppred + state.R);
+  const xnew = state.x + K * (measurement - state.x);
+  const Pnew = (1 - K) * Ppred;
+  state.x = xnew; state.P = Pnew;
+  return xnew;
+}
+
+// =====================================================================
+// STRATEGY DEFINITIONS
+// =====================================================================
+const STRATEGIES = [
+  { key:"noise",  name:"Noise",      color:0x8b98a9, desc:"random walk orders" },
+  { key:"momo",   name:"Momentum",   color:0x3fb950, desc:"EMA cross signal" },
+  { key:"revert", name:"Revert",     color:0x58a6ff, desc:"Bollinger z-score" },
+  { key:"kalman", name:"Kalman",     color:0xf0b90b, desc:"KF price estimate" },
+  { key:"ar1",    name:"AR(1)",      color:0xff69b4, desc:"autoregressive model" },
+  { key:"mm",     name:"MarketMaker",color:0x8a2be2, desc:"spread capturing" }
+];
+
+// =====================================================================
+// MARKET STATE
+// =====================================================================
+const TICK_MS = 200;
+const MAX_HIST = 300;
+const START_PRICE = 100;
+
+let price = START_PRICE;
+let priceHistory = [START_PRICE];
+let returnHistory = [];
+let netFlowHistory = [0];
+let tick = 0;
+let paused = false;
+let externalShock = 0;
+let selectedStrategy = null;
+
+// per-strategy aggregate stats
+const stratStats = {};
+for(const s of STRATEGIES){
+  stratStats[s.key] = { pnl:0, cash:100000, pos:0, avgCost:0, trades:0, wins:0, losses:0,
+    color:s.color, name:s.name, key:s.key, history:[0] };
+}
+
+// prediction model outputs
+let predEMA = START_PRICE;
+let predKalman = { x: START_PRICE, P: 1, Q: 0.5, R: 5 };
+let predAR1 = { c:0, phi:0, sigma:0 };
+let predBollZ = 0;
+
+// =====================================================================
+// AGENTS
+// =====================================================================
+const N_PER_STRAT = 7;   // 7 × 6 = 42 agents
+const agents = [];
+
+function makeAgent(type, idx){
+  const startCash = 5000 + Math.random()*5000;
+  return {
+    id: `${type}-${idx}`,
+    type,
+    cash: startCash,
+    startCash,             // capital the agent actually started with — P&L is measured against this, not a flat guess
+    pos: 0,
+    avgCost: 0,
+    pnl: 0,
+    lastSignal: 0,
+    memory: [],           // per-agent small history for personal signals
+    riskAppetite: 0.5 + Math.random()*0.9,
+    color: STRATEGIES.find(s=>s.key===type).color
+  };
+}
+
+function initAgents(){
+  agents.length = 0;
+  for(const s of STRATEGIES){
+    for(let i=0;i<N_PER_STRAT;i++) agents.push(makeAgent(s.key,i));
+  }
+}
+
+// =====================================================================
+// SIGNAL GENERATION (per agent type)
+// =====================================================================
+function signalFor(agent){
+  const p = price;
+  const rets = returnHistory;
+  switch(agent.type){
+    case "noise": {
+      // pure random noise
+      return (Math.random()-0.5) * 1.6;
+    }
+    case "momo": {
+      // EMA(5) vs EMA(20) crossover
+      if(priceHistory.length < 22) return 0;
+      const e5 = ema(priceHistory,5).slice(-1)[0];
+      const e20 = ema(priceHistory,20).slice(-1)[0];
+      const sig = (e5 - e20) / e20 * 25;
+      return Math.tanh(sig) * agent.riskAppetite;
+    }
+    case "revert": {
+      // Bollinger z-score: buy when price below lower band, sell above upper
+      if(priceHistory.length < 22) return 0;
+      const slice = priceHistory.slice(-20);
+      const m = mean(slice), s = std(slice);
+      if(s===0) return 0;
+      const z = (p - m) / s;
+      predBollZ = z;
+      return -Math.tanh(z * 0.7) * agent.riskAppetite; // contrarian
+    }
+    case "kalman": {
+      // Use Kalman filter estimate vs price: buy if price below KF estimate
+      const kf = predKalman.x;
+      const gap = (kf - p) / kf;
+      return Math.tanh(gap * 30) * agent.riskAppetite;
+    }
+    case "ar1": {
+      // AR(1) forecast of next return
+      if(rets.length < 12) return 0;
+      const model = predAR1;
+      const lastR = rets[rets.length-1];
+      const forecast = model.c + model.phi * lastR;
+      return Math.tanh(forecast * 40) * agent.riskAppetite;
+    }
+    case "mm": {
+      // Market maker: fade big moves, prefer mean
+      if(priceHistory.length < 10) return 0;
+      const ma10 = mean(priceHistory.slice(-10));
+      const dev = (p - ma10) / ma10;
+      // fade + small random component
+      return (-Math.tanh(dev * 12) + (Math.random()-0.5)*0.3) * agent.riskAppetite;
+    }
+  }
+  return 0;
+}
+
+// =====================================================================
+// TRADING LOOP
+// =====================================================================
+function tradeTick(){
+  tick++;
+
+  // ---- update prediction models ----
+  // EMA of price
+  predEMA = price * (2/11) + predEMA * (9/11);
+
+  // Kalman
+  kalmanUpdate(predKalman, price);
+
+  // AR(1) refit every 5 ticks
+  if(tick % 5 === 0 && returnHistory.length > 12){
+    predAR1 = fitAR1(returnHistory.slice(-40));
+  }
+
+  // ---- each agent produces a signal ----
+  // signals are in [-1, +1]; positive = want to buy
+  let totalBuyFlow = 0, totalSellFlow = 0;
+  const perStratFlow = {};
+  for(const s of STRATEGIES) perStratFlow[s.key] = 0;
+
+  for(const a of agents){
+    const sig = signalFor(a);
+    a.lastSignal = sig;
+    // convert signal to order size
+    const maxOrderValue = a.cash * 0.15 * a.riskAppetite;
+    let orderValue = sig * maxOrderValue;
+
+    // cap by cash when buying
+    if(orderValue > 0) orderValue = Math.min(orderValue, a.cash);
+
+    // apply: this is a market order at current price
+    if(Math.abs(orderValue) < 1) continue;
+    const qty = orderValue / price;
+    if(sig > 0){
+      // buy
+      const cost = qty * price;
+      if(cost <= a.cash){
+        a.cash -= cost;
+        a.pos += qty;
+        // update average cost
+        a.avgCost = a.pos > 0
+          ? (a.avgCost * (a.pos - qty) + cost) / a.pos
+          : price;
+        totalBuyFlow += cost;
+        perStratFlow[a.type] += cost;
+        stratStats[a.type].trades++;
+      }
+    } else {
+      // sell (can sell what you have; no shorting to keep it simple)
+      const qty2 = Math.min(-qty, a.pos);
+      if(qty2 > 0){
+        const proceeds = qty2 * price;
+        a.cash += proceeds;
+        a.pos -= qty2;
+        totalSellFlow += proceeds;
+        perStratFlow[a.type] -= proceeds;
+        if(a.pos <= 1e-9){ a.pos = 0; a.avgCost = 0; }
+        stratStats[a.type].trades++;
+      }
+    }
+  }
+
+  // ---- price impact from net flow ----
+  const netFlow = totalBuyFlow - totalSellFlow;
+  // impact coefficient: how much flow moves price (liquidity proxy)
+  const LIQ = 60000;
+  const impact = netFlow / LIQ;
+
+  // base random walk noise + external shock
+  const noise = gauss() * 0.0025;
+  externalShock *= 0.85;
+
+  const dLogP = impact + noise + externalShock;
+  price *= Math.exp(dLogP);
+  if(price < 1) price = 1;
+
+  // record
+  priceHistory.push(price);
+  returnHistory.push(dLogP);
+  netFlowHistory.push(netFlow);
+  if(priceHistory.length > MAX_HIST) priceHistory.shift();
+  if(returnHistory.length > MAX_HIST) returnHistory.shift();
+  if(netFlowHistory.length > MAX_HIST) netFlowHistory.shift();
+
+  // ---- per-strategy aggregate update ----
+  // P&L is each agent's current value (cash + position marked at the current
+  // price) minus what that agent actually started with — summed once per
+  // agent, not once per agent squared, and against each agent's real
+  // (randomised) starting cash rather than an assumed flat 5000.
+  for(const key of Object.keys(stratStats)){
+    const grp = agents.filter(a=>a.type===key);
+    const cash = grp.reduce((s,a)=>s+a.cash,0);
+    const pos  = grp.reduce((s,a)=>s+a.pos,0);
+    const pnl  = grp.reduce((s,a)=>s + (a.cash + a.pos*price - a.startCash), 0);
+    const st = stratStats[key];
+    st.cash = cash;
+    st.pos = pos;
+    st.pnl = pnl;
+    st.history.push(pnl);
+    if(st.history.length > MAX_HIST) st.history.shift();
+  }
+
+  // ---- per-agent P&L ----
+  for(const a of agents){
+    a.pnl = a.cash + a.pos * price - a.startCash;
+  }
+}
+
+// =====================================================================
+// 3D SCENE
+// =====================================================================
+let scene, camera, renderer, controls;
+let centralCoin, coinHalo;
+const agentMeshes = [];       // one per agent
+const strategyOrbits = {};    // key -> radius
+
+function init3D(){
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070a10);
+  scene.fog = new THREE.FogExp2(0x070a10, 0.018);
+  camera = new THREE.PerspectiveCamera(52, innerWidth/innerHeight, 0.1, 500);
+  camera.position.set(0, 9, 26);
+
+  renderer = new THREE.WebGLRenderer({ canvas: document.getElementById("c3d"), antialias:true });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.dampingFactor = 0.08;
+  controls.target.set(0, 0, 0);
+  controls.minDistance = 6; controls.maxDistance = 60;
+  controls.maxPolarAngle = Math.PI * 0.55;
+
+  scene.add(new THREE.AmbientLight(0x6c84a8, 1.0));
+  const key = new THREE.DirectionalLight(0xffffff, 1.2); key.position.set(8,18,10); scene.add(key);
+  const rim = new THREE.DirectionalLight(0x58a6ff, 0.7); rim.position.set(-10,4,-12); scene.add(rim);
+
+  // grid floor
+  const grid = new THREE.GridHelper(80, 40, 0x1a2231, 0x0f141c);
+  grid.position.y = -6; grid.material.transparent = true; grid.material.opacity = 0.5;
+  scene.add(grid);
+
+  // central coin = the market price
+  const coinGeo = new THREE.IcosahedronGeometry(1.4, 1);
+  const coinMat = new THREE.MeshStandardMaterial({
+    color:0xf0b90b, emissive:0xf0b90b, emissiveIntensity:0.6,
+    metalness:0.85, roughness:0.2
+  });
+  centralCoin = new THREE.Mesh(coinGeo, coinMat);
+  scene.add(centralCoin);
+
+  // wireframe overlay
+  const wire = new THREE.LineSegments(
+    new THREE.EdgesGeometry(coinGeo),
+    new THREE.LineBasicMaterial({color:0xffe9a0, transparent:true, opacity:0.5})
+  );
+  centralCoin.add(wire);
+
+  // halo
+  coinHalo = new THREE.Mesh(
+    new THREE.SphereGeometry(2.2, 24, 24),
+    new THREE.MeshBasicMaterial({color:0xf0b90b, transparent:true, opacity:0.08,
+      blending:THREE.AdditiveBlending, depthWrite:false})
+  );
+  centralCoin.add(coinHalo);
+
+  // agent orbits — one radius per strategy
+  let r = 5;
+  for(const s of STRATEGIES){
+    strategyOrbits[s.key] = r;
+    r += 1.6;
+    // faint orbit ring
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(r - 0.03, r + 0.03, 64),
+      new THREE.MeshBasicMaterial({color:s.color, transparent:true, opacity:0.12,
+        side:THREE.DoubleSide, blending:THREE.AdditiveBlending, depthWrite:false})
+    );
+    ring.rotation.x = -Math.PI/2;
+    scene.add(ring);
+  }
+
+  // create agent spheres
+  const agentByType = {};
+  for(const a of agents){
+    if(!agentByType[a.type]) agentByType[a.type] = [];
+    agentByType[a.type].push(a);
+  }
+  for(const a of agents){
+    const geo = new THREE.SphereGeometry(0.22, 10, 10);
+    const mat = new THREE.MeshStandardMaterial({
+      color:a.color, emissive:a.color, emissiveIntensity:0.5,
+      metalness:0.6, roughness:0.35
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    // assign an orbit angle within its strategy ring
+    const idxInStrat = agentByType[a.type].indexOf(a);
+    const n = agentByType[a.type].length;
+    const angle = (idxInStrat / n) * Math.PI * 2;
+    const radius = strategyOrbits[a.type];
+    mesh.userData = {
+      angle, radius,
+      rTarget: radius,          // current radius (moves in/out on buy/sell)
+      baseRadius: radius,
+      pulse: 0,                 // pulse intensity on recent trade
+      color: a.color,
+      prevPos: a.pos,
+      prevCash: a.cash
+    };
+    scene.add(mesh);
+    agentMeshes.push({mesh, agent:a});
+  }
+
+  addEventListener("resize", onResize);
+}
+
+function onResize(){
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  resizeMainChart();
+}
+
+function update3D(t){
+  // central coin
+  const logPrice = Math.log(price / START_PRICE);
+  centralCoin.position.y = logPrice * 3.5;
+  centralCoin.rotation.y += 0.008;
+  centralCoin.rotation.x += 0.003;
+  // pulse size slightly with movement
+  const lastRet = returnHistory.length ? returnHistory[returnHistory.length-1] : 0;
+  const pulse = 1 + Math.min(0.4, Math.abs(lastRet)*25);
+  centralCoin.scale.setScalar(pulse);
+  coinHalo.material.opacity = 0.06 + Math.min(0.25, Math.abs(lastRet)*20);
+
+  // agents
+  for(let i=0;i<agentMeshes.length;i++){
+    const {mesh, agent} = agentMeshes[i];
+    const ud = mesh.userData;
+
+    // detect trade since last frame
+    const posChanged = Math.abs(agent.pos - ud.prevPos) > 1e-6;
+    if(posChanged){
+      ud.pulse = 1.0;
+      // move slightly: buys inward, sells outward
+      const delta = agent.pos - ud.prevPos;
+      ud.rTarget = ud.baseRadius - delta * 0.4;
+    }
+    ud.prevPos = agent.pos;
+    ud.prevCash = agent.cash;
+
+    // return toward base radius
+    ud.rTarget += (ud.baseRadius - ud.rTarget) * 0.06;
+
+    // orbit angle advances based on signal magnitude
+    const speed = 0.15 + Math.abs(agent.lastSignal) * 0.5;
+    ud.angle += speed * 0.016;
+
+    const x = Math.cos(ud.angle) * ud.rTarget;
+    const z = Math.sin(ud.angle) * ud.rTarget;
+    const y = Math.sin(t * 0.8 + i * 0.4) * 0.4 + logPrice * 1.0;
+    mesh.position.set(x, y, z);
+
+    // pulse: scale + emissive
+    if(ud.pulse > 0){
+      mesh.scale.setScalar(1 + ud.pulse * 0.9);
+      mesh.material.emissiveIntensity = 0.5 + ud.pulse * 2.0;
+      ud.pulse *= 0.90;
+    } else {
+      mesh.scale.setScalar(1);
+      mesh.material.emissiveIntensity = 0.5 + Math.abs(agent.lastSignal) * 0.5;
+    }
+  }
+}
+
+// =====================================================================
+// 2D CHARTS
+// =====================================================================
+const mainCanvas = document.getElementById("mainchart");
+const mctx = mainCanvas.getContext("2d");
+let chartTab = "price";
+
+function setTab(t){
+  chartTab = t;
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === t));
+  drawMainChart();
+}
+function resizeMainChart(){
+  const r = mainCanvas.getBoundingClientRect();
+  const dpr = Math.min(devicePixelRatio, 2);
+  mainCanvas.width = r.width * dpr; mainCanvas.height = r.height * dpr;
+  mctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function drawMainChart(){
+  const r = mainCanvas.getBoundingClientRect();
+  const W = r.width, H = r.height;
+  mctx.clearRect(0, 0, W, H);
+  if(W < 10) return;
+  const padL = 50, padR = 12, padT = 8, padB = 20;
+  const cw = W - padL - padR, ch = H - padT - padB;
+  const n = priceHistory.length;
+  const xFor = k => padL + (cw * k) / Math.max(1, n - 1);
+
+  mctx.strokeStyle = "#1a2231"; mctx.lineWidth = 1;
+  mctx.font = "10px ui-monospace,monospace";
+
+  if(chartTab === "price"){
+    document.getElementById("chartTitle").textContent =
+      "Price (blue) · EMA(20) (grey) · Kalman estimate (gold) · AR(1) forecast (pink)";
+
+    let lo = Infinity, hi = -Infinity;
+    for(const p of priceHistory){ if(p<lo)lo=p; if(p>hi)hi=p; }
+    const pad = (hi-lo)*0.08 || 1;
+    lo -= pad; hi += pad;
+    const yFor = v => padT + ch * (1 - (v - lo) / (hi - lo));
+
+    // grid
+    for(let i=0;i<=4;i++){
+      const v = lo + (hi-lo)*i/4, y = yFor(v);
+      mctx.beginPath(); mctx.moveTo(padL,y); mctx.lineTo(W-padR,y); mctx.stroke();
+      mctx.fillStyle="#8b98a9";
+      mctx.fillText(v.toFixed(1), 6, y+3);
+    }
+
+    // price
+    mctx.strokeStyle="#58a6ff"; mctx.lineWidth=2;
+    mctx.beginPath();
+    for(let k=0;k<n;k++){
+      const x=xFor(k), y=yFor(priceHistory[k]);
+      if(k===0) mctx.moveTo(x,y); else mctx.lineTo(x,y);
+    }
+    mctx.stroke();
+
+    // EMA(20)
+    const e20 = ema(priceHistory, 20);
+    mctx.strokeStyle="#8b98a9"; mctx.lineWidth=1.2; mctx.setLineDash([3,3]);
+    mctx.beginPath(); let started=false;
+    for(let k=0;k<n;k++){
+      if(e20[k]==null) continue;
+      const x=xFor(k), y=yFor(e20[k]);
+      if(!started){ mctx.moveTo(x,y); started=true; } else mctx.lineTo(x,y);
+    }
+    mctx.stroke(); mctx.setLineDash([]);
+
+    // Kalman estimate — build synthetic history from Kalman x we stored
+    if(kalmanTrail.length > 1){
+      const m = Math.min(kalmanTrail.length, n);
+      const offset = n - m;
+      mctx.strokeStyle="#f0b90b"; mctx.lineWidth=1.5;
+      mctx.beginPath(); started=false;
+      for(let k=0;k<m;k++){
+        const x=xFor(offset+k), y=yFor(kalmanTrail[k]);
+        if(!started){ mctx.moveTo(x,y); started=true; } else mctx.lineTo(x,y);
+      }
+      mctx.stroke();
+    }
+
+    // AR(1) forecast arrow from last point
+    if(returnHistory.length >= 12 && predAR1.phi !== 0){
+      const lastR = returnHistory[returnHistory.length-1];
+      const forecast = predAR1.c + predAR1.phi * lastR;
+      const predPrice = price * Math.exp(forecast);
+      const x0 = xFor(n-1), y0 = yFor(price);
+      const x1 = xFor(n-1) + 26, y1 = yFor(predPrice);
+      mctx.strokeStyle="#ff69b4"; mctx.lineWidth=2;
+      mctx.beginPath(); mctx.moveTo(x0,y0); mctx.lineTo(x1,y1); mctx.stroke();
+      mctx.beginPath(); mctx.arc(x1,y1,3,0,Math.PI*2);
+      mctx.fillStyle="#ff69b4"; mctx.fill();
+      mctx.fillStyle="#8b98a9"; mctx.font="9px ui-monospace,monospace";
+      mctx.fillText("AR(1) →", x1+4, y1+3);
+    }
+  }
+  else if(chartTab === "pnl"){
+    document.getElementById("chartTitle").textContent = "Cumulative P&L per strategy";
+    let lo = 0, hi = 0;
+    for(const s of STRATEGIES){
+      for(const v of stratStats[s.key].history){ if(v<lo)lo=v; if(v>hi)hi=v; }
+    }
+    const pad = (hi-lo)*0.08 || 1;
+    lo -= pad; hi += pad;
+    const yFor = v => padT + ch * (1 - (v - lo) / (hi - lo));
+
+    for(let i=0;i<=4;i++){
+      const v = lo + (hi-lo)*i/4, y = yFor(v);
+      mctx.beginPath(); mctx.moveTo(padL,y); mctx.lineTo(W-padR,y); mctx.stroke();
+      mctx.fillStyle="#8b98a9";
+      mctx.fillText(v.toFixed(0), 6, y+3);
+    }
+    // zero line
+    const y0 = yFor(0);
+    mctx.strokeStyle="#2a3342"; mctx.setLineDash([3,3]);
+    mctx.beginPath(); mctx.moveTo(padL,y0); mctx.lineTo(W-padR,y0);
+    mctx.stroke(); mctx.setLineDash([]);
+
+    for(const s of STRATEGIES){
+      const hist = stratStats[s.key].history;
+      const m = Math.min(hist.length, n);
+      const offset = n - m;
+      mctx.strokeStyle = "#"+s.color.toString(16).padStart(6,"0");
+      mctx.lineWidth = 1.8;
+      mctx.beginPath(); started=false;
+      for(let k=0;k<m;k++){
+        const x=xFor(offset+k), y=yFor(hist[k]);
+        if(!started){ mctx.moveTo(x,y); started=true; } else mctx.lineTo(x,y);
+      }
+      mctx.stroke();
+    }
+  }
+  else if(chartTab === "position"){
+    document.getElementById("chartTitle").textContent = "Net position (units) per strategy";
+    let lo = 0, hi = 0;
+    for(const s of STRATEGIES){
+      const v = stratStats[s.key].pos;
+      if(v<lo) lo=v; if(v>hi) hi=v;
+    }
+    // Only current value, so use bars
+    const barW = Math.min(60, (W-padL-padR)/STRATEGIES.length - 20);
+    const centerY = padT + ch/2;
+    // axis
+    mctx.strokeStyle = "#1a2231";
+    mctx.beginPath(); mctx.moveTo(padL, centerY); mctx.lineTo(W-padR, centerY); mctx.stroke();
+
+    const maxAbs = Math.max(Math.abs(lo), Math.abs(hi), 1);
+    const scale = (ch/2 - 4) / maxAbs;
+
+    for(let i=0;i<STRATEGIES.length;i++){
+      const s = STRATEGIES[i];
+      const pos = stratStats[s.key].pos;
+      const x = padL + (i + 0.5) * ((W-padL-padR)/STRATEGIES.length) - barW/2;
+      const h = pos * scale;
+      const y = pos >= 0 ? centerY - h : centerY;
+      mctx.fillStyle = "#"+s.color.toString(16).padStart(6,"0");
+      mctx.globalAlpha = 0.85;
+      mctx.fillRect(x, y, barW, Math.abs(h));
+      mctx.globalAlpha = 1;
+
+      mctx.fillStyle = "#8b98a9";
+      mctx.font = "9px ui-monospace,monospace";
+      mctx.textAlign = "center";
+      mctx.fillText(s.key, x + barW/2, H - 6);
+      mctx.fillStyle = pos >= 0 ? "#3fb950" : "#f85149";
+      mctx.fillText(pos.toFixed(1), x + barW/2, pos >= 0 ? y - 4 : y + Math.abs(h) + 12);
+      mctx.textAlign = "left";
+    }
+  }
+
+  mctx.fillStyle="#8b98a9"; mctx.font="10px ui-monospace,monospace";
+  mctx.fillText("now", W-padR-22, H-6);
+  mctx.fillText("← older", padL+4, H-6);
+}
+
+// =====================================================================
+// KALMAN TRAIL (for charting)
+// =====================================================================
+const kalmanTrail = [];
+
+// =====================================================================
+// UI
+// =====================================================================
+const $ = id => document.getElementById(id);
+const colorHex = c => "#"+c.toString(16).padStart(6,"0");
+
+function renderStrategyList(){
+  $("stratlist").innerHTML = STRATEGIES.map(s => {
+    const st = stratStats[s.key];
+    const pnl = st.pnl;
+    const cls = pnl >= 0 ? "pos" : "neg";
+    const sign = pnl >= 0 ? "+" : "";
+    const isSel = selectedStrategy === s.key ? "sel" : "";
+    return `<div class="strat-row ${isSel}" onclick="selectStrategy('${s.key}')">
+      <div class="strat-dot" style="background:${colorHex(s.color)}"></div>
+      <div>
+        <div class="strat-name">${s.name}</div>
+        <div class="strat-sub">${s.desc}</div>
+      </div>
+      <div class="strat-val">
+        <div class="${cls}">${sign}${pnl.toFixed(0)}</div>
+        <div style="color:#8b98a9">${st.trades} trades</div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderAgentList(){
+  const sorted = [...agents].sort((a,b) => {
+    const pa = a.cash + a.pos*price - a.startCash;
+    const pb = b.cash + b.pos*price - b.startCash;
+    return pb - pa;
+  });
+  const rows = sorted.slice(0, 20).map(a => {
+    const pnl = a.cash + a.pos*price - a.startCash;
+    const cls = pnl >= 0 ? "pos" : "neg";
+    const sign = pnl >= 0 ? "+" : "";
+    return `<div class="agentrow">
+      <div class="adot" style="background:${colorHex(a.color)}"></div>
+      <div class="aname">${a.id}</div>
+      <div class="apos">${a.pos.toFixed(2)}</div>
+      <div class="apnl ${cls}">${sign}${pnl.toFixed(0)}</div>
+    </div>`;
+  }).join("");
+  $("agentlist").innerHTML = rows;
+}
+
+function selectStrategy(key){
+  selectedStrategy = selectedStrategy === key ? null : key;
+  renderStrategyList();
+  renderDetail();
+}
+
+function renderDetail(){
+  $("dt").textContent = selectedStrategy
+    ? "Strategy: " + STRATEGIES.find(s=>s.key===selectedStrategy).name
+    : "Market State";
+
+  if(!selectedStrategy){
+    // overall market
+    const rets = returnHistory.slice(-50);
+    const vol = std(rets) * Math.sqrt(252) * 100;
+    const totalPnl = Object.values(stratStats).reduce((s,x)=>s+x.pnl, 0);
+    const flow = netFlowHistory[netFlowHistory.length-1] || 0;
+    const bhReturn = (price / START_PRICE - 1) * 100;
+    $("detail").innerHTML = `
+      <div class="metric"><span>Price</span><span>${price.toFixed(2)}</span></div>
+      <div class="metric"><span>Buy & hold return</span>
+        <span class="${bhReturn>=0?'pos':'neg'}">${bhReturn>=0?'+':''}${bhReturn.toFixed(2)}%</span></div>
+      <div class="metric"><span>Recent σ (ann.)</span><span>${vol.toFixed(1)}%</span></div>
+      <div class="metric"><span>Net flow last tick</span>
+        <span class="${flow>=0?'pos':'neg'}">${flow>=0?'+':''}${flow.toFixed(0)}</span></div>
+      <div class="metric"><span>Total strategy P&L</span>
+        <span class="${totalPnl>=0?'pos':'neg'}">${totalPnl>=0?'+':''}${totalPnl.toFixed(0)}</span></div>
+      <div class="metric"><span>Active agents</span><span>${agents.length}</span></div>
+    `;
+  } else {
+    const st = stratStats[selectedStrategy];
+    const grp = agents.filter(a => a.type === selectedStrategy);
+    const avgCash = mean(grp.map(a=>a.cash));
+    const totalPos = st.pos;
+    const avgPos = totalPos / grp.length;
+    const s = STRATEGIES.find(x=>x.key===selectedStrategy);
+    $("detail").innerHTML = `
+      <div class="metric"><span>Strategy</span><span style="color:${colorHex(s.color)}">${s.name}</span></div>
+      <div class="metric"><span>Total P&L</span>
+        <span class="${st.pnl>=0?'pos':'neg'}">${st.pnl>=0?'+':''}${st.pnl.toFixed(0)}</span></div>
+      <div class="metric"><span>Net position</span><span>${st.pos.toFixed(2)}</span></div>
+      <div class="metric"><span>Avg position / agent</span><span>${avgPos.toFixed(2)}</span></div>
+      <div class="metric"><span>Avg cash / agent</span><span>${avgCash.toFixed(0)}</span></div>
+      <div class="metric"><span>Agents</span><span>${grp.length}</span></div>
+      <div class="metric"><span>Signal (avg)</span>
+        <span>${mean(grp.map(a=>a.lastSignal)).toFixed(3)}</span></div>
+    `;
+  }
+}
+
+function renderPredictionPanel(){
+  const ar = predAR1;
+  const lastR = returnHistory.length ? returnHistory[returnHistory.length-1] : 0;
+  const arForecast = ar.c + ar.phi * lastR;
+  const arPrice = price * Math.exp(arForecast);
+  const kfGap = ((predKalman.x - price) / price * 100);
+  const e20 = ema(priceHistory, 20).slice(-1)[0] || price;
+  const emaGap = ((price - e20) / e20 * 100);
+
+  $("predpanel").innerHTML = `
+    <div class="metric"><span>Kalman estimate</span><span>${predKalman.x.toFixed(2)}</span></div>
+    <div class="metric"><span>KF gap</span>
+      <span class="${kfGap>=0?'pos':'neg'}">${kfGap>=0?'+':''}${kfGap.toFixed(2)}%</span></div>
+    <div class="metric"><span>KF gain P</span><span>${predKalman.P.toFixed(3)}</span></div>
+    <div class="metric"><span>EMA(20)</span><span>${e20.toFixed(2)}</span></div>
+    <div class="metric"><span>EMA gap</span>
+      <span class="${emaGap>=0?'pos':'neg'}">${emaGap>=0?'+':''}${emaGap.toFixed(2)}%</span></div>
+    <div class="metric"><span>AR(1) φ</span><span>${ar.phi.toFixed(3)}</span></div>
+    <div class="metric"><span>AR(1) forecast</span>
+      <span>${(arForecast*100).toFixed(3)}%</span></div>
+    <div class="metric"><span>AR(1) implied px</span><span>${arPrice.toFixed(2)}</span></div>
+    <div class="metric"><span>Bollinger z</span><span>${predBollZ.toFixed(2)}</span></div>
+  `;
+}
+
+function renderTopStats(){
+  const lastR = returnHistory.length ? returnHistory[returnHistory.length-1] : 0;
+  const vol = std(returnHistory.slice(-50)) * Math.sqrt(252) * 100;
+  const flow = netFlowHistory[netFlowHistory.length-1] || 0;
+  const ar = predAR1;
+  const arForecast = ar.c + ar.phi * (returnHistory[returnHistory.length-1] || 0);
+  const predDir = arForecast > 0 ? "↑" : "↓";
+  const predCls = arForecast > 0 ? "pos" : "neg";
+
+  $("s-price").textContent = price.toFixed(2);
+  $("s-vol").textContent = vol.toFixed(1) + "%";
+  const flowEl = $("s-flow");
+  flowEl.textContent = (flow >= 0 ? "+" : "") + flow.toFixed(0);
+  flowEl.style.color = flow >= 0 ? "#3fb950" : "#f85149";
+  const predEl = $("s-pred");
+  predEl.textContent = predDir + (arForecast*100).toFixed(2) + "%";
+  predEl.style.color = arForecast > 0 ? "#3fb950" : "#f85149";
+  $("s-tick").textContent = tick;
+
+  const nonZero = agents.filter(a => Math.abs(a.lastSignal) > 0.05).length;
+  $("activeTag").textContent = nonZero + " active";
+}
+
+// =====================================================================
+// CONTROLS
+// =====================================================================
+function shock(amount){
+  externalShock = amount;
+}
+function pauseToggle(){
+  paused = !paused;
+  $("pauseBtn").textContent = paused ? "Play" : "Pause";
+}
+function resetAll(){
+  price = START_PRICE;
+  priceHistory = [price];
+  returnHistory = [];
+  netFlowHistory = [0];
+  tick = 0;
+  externalShock = 0;
+  kalmanTrail.length = 0;
+  predKalman = { x: START_PRICE, P: 1, Q: 0.5, R: 5 };
+  predEMA = START_PRICE;
+  predAR1 = { c:0, phi:0, sigma:0 };
+  initAgents();
+  // reset strat stats
+  for(const s of STRATEGIES){
+    stratStats[s.key] = { pnl:0, cash:100000, pos:0, avgCost:0, trades:0, wins:0,
+      losses:0, color:s.color, name:s.name, key:s.key, history:[0] };
+  }
+  // Rebind each mesh to its new agent object — initAgents() above just
+  // replaced every entry in `agents` with a brand-new object, and without
+  // this the spheres would keep animating off the discarded pre-reset
+  // agents forever (they'd still orbit, since angle speed only needs a
+  // signal magnitude, but position/pulse would never reflect a real trade
+  // again). initAgents() rebuilds `agents` in the same STRATEGIES × index
+  // order agentMeshes was built in, so a straight index match is correct.
+  for(let i=0;i<agentMeshes.length;i++){
+    agentMeshes[i].agent = agents[i];
+    agentMeshes[i].mesh.userData.pulse = 0;
+    agentMeshes[i].mesh.userData.rTarget = agentMeshes[i].mesh.userData.baseRadius;
+    agentMeshes[i].mesh.userData.prevPos = agents[i].pos;
+    agentMeshes[i].mesh.userData.prevCash = agents[i].cash;
+  }
+}
+
+// =====================================================================
+// MAIN LOOP
+// =====================================================================
+let lastSimTime = 0, lastChartDraw = 0, lastUIDraw = 0;
+let prevPrice = START_PRICE;
+
+function loop(){
+  requestAnimationFrame(loop);
+  const now = performance.now();
+  if(!paused && now - lastSimTime >= TICK_MS){
+    lastSimTime = now;
+    prevPrice = price;
+    tradeTick();
+    // track Kalman trail for chart
+    kalmanTrail.push(predKalman.x);
+    if(kalmanTrail.length > MAX_HIST) kalmanTrail.shift();
+  }
+  update3D(now/1000);
+
+  if(now - lastChartDraw > 100){ lastChartDraw = now; drawMainChart(); }
+  if(now - lastUIDraw > 350){
+    lastUIDraw = now;
+    renderStrategyList();
+    renderAgentList();
+    renderDetail();
+    renderPredictionPanel();
+    renderTopStats();
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+// =====================================================================
+// BOOT
+// =====================================================================
+initAgents();
+init3D();
+resizeMainChart();
+// warmup
+for(let i=0;i<60;i++){ tradeTick(); kalmanTrail.push(predKalman.x); }
+renderStrategyList(); renderAgentList(); renderDetail();
+renderPredictionPanel(); renderTopStats(); drawMainChart();
+loop();
+
+window.selectStrategy = selectStrategy;
+window.shock = shock;
+window.pauseToggle = pauseToggle;
+window.resetAll = resetAll;
+window.setTab = setTab;
+</script>
+</body>
+</html>
